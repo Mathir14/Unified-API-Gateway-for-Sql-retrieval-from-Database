@@ -9,20 +9,34 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-# Download DB if missing
-DB_PATH = Path("/tmp/survey_data.db")
 
-DB_URL = (
-    "https://drive.google.com/uc?export=download&id=1izuRQnlxVXblHdDjDVVkWHxPlyJt-hYQ"
-)
+def download_from_gdrive(file_id, dest_path):
+    URL = "https://docs.google.com/uc?export=download"
+    session = requests.Session()
 
-if not DB_PATH.exists():
-    print("survey_data.db not found, downloading from Google Drive...")
-    with requests.get(DB_URL, stream=True) as r:
-        r.raise_for_status()
-        with open(DB_PATH, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
+    response = session.get(URL, params={"id": file_id}, stream=True)
+    token = None
+    for key, value in response.cookies.items():
+        if key.startswith("download_warning"):
+            token = value
+
+    if token:
+        params = {"id": file_id, "confirm": token}
+        response = session.get(URL, params=params, stream=True)
+
+    with open(dest_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=32768):
+            if chunk:
                 f.write(chunk)
+
+
+# Usage
+DB_PATH = "/tmp/survey_data.db"
+FILE_ID = "1izuRQnlxVXblHdDjDVVkWHxPlyJt-hYQ"
+
+if not Path(DB_PATH).exists():
+    print("survey_data.db not found, downloading from Google Drive...")
+    download_from_gdrive(FILE_ID, DB_PATH)
     print("Download complete.")
 
 
