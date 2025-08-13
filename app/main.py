@@ -1,5 +1,4 @@
 import json
-import os
 import sqlite3
 from pathlib import Path
 
@@ -10,36 +9,37 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 
-def download_from_gdrive(file_id, dest_path):
-    URL = "https://docs.google.com/uc?export=download"
-    session = requests.Session()
+# ---------- Dropbox download ----------
+def download_from_dropbox(url: str, dest_path: str):
+    # Force direct download
+    if url.endswith("?dl=0"):
+        url = url[:-5] + "?dl=1"
 
-    response = session.get(URL, params={"id": file_id}, stream=True)
-    token = None
-    for key, value in response.cookies.items():
-        if key.startswith("download_warning"):
-            token = value
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(dest_path, "wb") as f:
+            for chunk in r.iter_content(32768):
+                if chunk:
+                    f.write(chunk)
 
-    if token:
-        params = {"id": file_id, "confirm": token}
-        response = session.get(URL, params=params, stream=True)
-
-    with open(dest_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=32768):
-            if chunk:
-                f.write(chunk)
+    # Sanity check
+    with open(dest_path, "rb") as f:
+        header = f.read(16)
+        if not header.startswith(b"SQLite format 3"):
+            raise RuntimeError("Downloaded file is not a valid SQLite database")
 
 
-# Usage
+# ---------- Setup database ----------
 DB_PATH = "/tmp/survey_data.db"
-FILE_ID = "1izuRQnlxVXblHdDjDVVkWHxPlyJt-hYQ"
+DROPBOX_URL = "https://www.dropbox.com/scl/fi/9y1fwira5jpoip4lzh5a4/survey_data.db?rlkey=phr69jvzudrok1k0u2sdltwhd&st=bys086nx&dl=1"
 
 if not Path(DB_PATH).exists():
-    print("survey_data.db not found, downloading from Google Drive...")
-    download_from_gdrive(FILE_ID, DB_PATH)
-    print("Download complete.")
+    print("survey_data.db not found, downloading from Dropbox...")
+    download_from_dropbox(DROPBOX_URL, DB_PATH)
+    print("Download complete!")
 
 
+# ---------- FastAPI setup ----------
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -57,32 +57,30 @@ allowed_tables = {"HHFV_2019-20", "HHRV_2019-20", "PERFV_2019-20", "PERRV_2019-2
 with open(METADATA_PATH, "r", encoding="utf-8") as f:
     metadata = json.load(f)
 
-# Serve static files (if needed)
+# Serve static files
 app.mount("/static", StaticFiles(directory=TEMPLATE_DIR), name="static")
 
 
-# Helper: get metadata keys for a table
+# ---------- Helper ----------
 def get_metadata_keys(table):
-    if table == "HHFV_2019-20":
-        suffix = "_hh_fv"
-    elif table == "HHRV_2019-20":
-        suffix = "_hh_rv"
-    elif table == "PERFV_2019-20":
-        suffix = "_per_fv"
-    elif table == "PERRV_2019-20":
-        suffix = "_per_rv"
-    else:
+    suffix_map = {
+        "HHFV_2019-20": "_hh_fv",
+        "HHRV_2019-20": "_hh_rv",
+        "PERFV_2019-20": "_per_fv",
+        "PERRV_2019-20": "_per_rv",
+    }
+    if table not in suffix_map:
         raise ValueError("Unknown table")
+    suffix = suffix_map[table]
     keys = [k for k in metadata.keys() if k.endswith(suffix)]
-    # Sort by variable id (e.g., V33, V34, ...)
     keys.sort(key=lambda k: int(metadata[k]["id"][1:]))
     return keys
 
 
+# ---------- Routes ----------
 @app.get("/")
 def serve_index():
-    index_path = TEMPLATE_DIR / "index.html"
-    return FileResponse(index_path)
+    return FileResponse(TEMPLATE_DIR / "index.html")
 
 
 @app.get("/api/{table_name}/data")
@@ -98,7 +96,6 @@ def get_table_data(
     if table_name not in allowed_tables:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    # Get metadata keys and labels for this table
     meta_keys = get_metadata_keys(table_name)
     labels = [metadata[k]["label"] for k in meta_keys]
     categories_list = [metadata[k].get("categories", {}) for k in meta_keys]
