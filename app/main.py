@@ -1,11 +1,27 @@
 import json
+import os
 import sqlite3
 from pathlib import Path
 
+import requests
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+# Download DB if missing
+DB_PATH = Path(__file__).resolve().parent.parent / "survey_data.db"
+DB_URL = (
+    "https://drive.google.com/uc?export=download&id=1izuRQnlxVXblHdDjDVVkWHxPlyJt-hYQ"
+)
+
+if not DB_PATH.exists():
+    print("survey_data.db not found, downloading from Google Drive...")
+    response = requests.get(DB_URL)
+    response.raise_for_status()
+    with open(DB_PATH, "wb") as f:
+        f.write(response.content)
+    print("Download complete.")
 
 app = FastAPI()
 app.add_middleware(
@@ -15,9 +31,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Use relative paths for deployment
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "survey_data.db"
 METADATA_PATH = BASE_DIR / "metadata.json"
 TEMPLATE_DIR = BASE_DIR / "template"
 
