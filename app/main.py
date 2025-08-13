@@ -10,18 +10,21 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 # Download DB if missing
-DB_PATH = Path(__file__).resolve().parent.parent / "survey_data.db"
+DB_PATH = Path("/tmp/survey_data.db")
+
 DB_URL = (
     "https://drive.google.com/uc?export=download&id=1izuRQnlxVXblHdDjDVVkWHxPlyJt-hYQ"
 )
 
 if not DB_PATH.exists():
     print("survey_data.db not found, downloading from Google Drive...")
-    response = requests.get(DB_URL)
-    response.raise_for_status()
-    with open(DB_PATH, "wb") as f:
-        f.write(response.content)
+    with requests.get(DB_URL, stream=True) as r:
+        r.raise_for_status()
+        with open(DB_PATH, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
     print("Download complete.")
+
 
 app = FastAPI()
 app.add_middleware(
